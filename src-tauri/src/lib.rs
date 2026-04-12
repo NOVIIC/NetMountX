@@ -152,12 +152,28 @@ pub fn init() -> anyhow::Result<()> {
 
     if !cfg!(debug_assertions) {
         if cfg!(target_os = "linux") {
-            let resources_dir = exe_dir
-                .parent()
-                .expect("无法获取父目录")
-                .join("lib")
-                .join(exe_flie_name);
-            env::set_current_dir(&resources_dir).expect("更改工作目录失败");
+            // 检测是否在 AppImage 环境中运行
+            let is_appimage = env::var("APPIMAGE").is_ok();
+            
+            if is_appimage {
+                // AppImage 环境下，使用 APPIMAGE 环境变量指向的实际路径
+                // 或者保持在当前目录（AppImage 挂载点）
+                println!("Running in AppImage mode, skipping directory change");
+            } else {
+                // 普通 Linux 安装环境
+                let resources_dir = exe_dir
+                    .parent()
+                    .expect("无法获取父目录")
+                    .join("lib")
+                    .join(exe_flie_name);
+                
+                if resources_dir.exists() {
+                    env::set_current_dir(&resources_dir).expect("更改工作目录失败");
+                } else {
+                    println!("Resources directory not found: {}, using exe_dir", resources_dir.display());
+                    env::set_current_dir(&exe_dir).expect("更改工作目录失败");
+                }
+            }
         }
 
         if cfg!(target_os = "windows") {
@@ -245,25 +261,6 @@ pub fn init() -> anyhow::Result<()> {
                 app.write_app_config(Config::default())?
             };
             app.update_app_config()?;
-
-            // 主窗口默认从 tauri.conf 设置为 visible=false，避免前端再隐藏造成闪屏。
-            // 在后端读取配置后再决定是否显示窗口。
-            let start_hide = app.with_app_state::<Config, _>(|config| {
-                config
-                    .0
-                    .get("settings")
-                    .and_then(|s| s.get("startHide"))
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-            });
-            if let Some(window) = app.app_main_window() {
-                if start_hide {
-                    let _ = window.hide();
-                } else {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            }
 
             //开发者工具
             #[cfg(debug_assertions)]
@@ -428,6 +425,7 @@ async fn spawn_sidecar(
     app: tauri::AppHandle<Runtime>,
     name: String,
     args: Vec<String>,
+    cwd: Option<String>,
 ) -> Result<u32, String> {
     use std::process::Stdio;
     use std::io::Write as _;
@@ -461,10 +459,14 @@ async fn spawn_sidecar(
         ), tauri::path::BaseDirectory::Resource)
         .map_err(|e| format!("Failed to resolve sidecar path: {}", e))?;
     
-    // 获取工作目录（用户主目录下的 .netmount）
-    let work_dir = app.path().home_dir()
-        .map_err(|e| format!("Failed to get home dir: {}", e))?
-        .join(".netmount");
+    // 获取工作目录：优先使用传入的 cwd，否则使用默认目录
+    let work_dir = if let Some(cwd_path) = cwd {
+        std::path::PathBuf::from(cwd_path)
+    } else {
+        app.path().home_dir()
+            .map_err(|e| format!("Failed to get home dir: {}", e))?
+            .join(".netmount")
+    };
     
     // 确保工作目录存在
     if !work_dir.exists() {
@@ -667,6 +669,7 @@ async fn run_sidecar_once(
     name: String,
     args: Vec<String>,
     timeout_ms: Option<u64>,
+    cwd: Option<String>,
 ) -> Result<RunSidecarOnceResult, String> {
     use std::io::Write as _;
     use std::process::Stdio;
@@ -704,11 +707,15 @@ async fn run_sidecar_once(
         )
         .map_err(|e| format!("Failed to resolve sidecar path: {}", e))?;
 
-    let work_dir = app
-        .path()
-        .home_dir()
-        .map_err(|e| format!("Failed to get home dir: {}", e))?
-        .join(".netmount");
+    // 获取工作目录：优先使用传入的 cwd，否则使用默认目录
+    let work_dir = if let Some(cwd_path) = cwd {
+        std::path::PathBuf::from(cwd_path)
+    } else {
+        app.path().home_dir()
+            .map_err(|e| format!("Failed to get home dir: {}", e))?
+            .join(".netmount")
+    };
+    
     if !work_dir.exists() {
         let _ = std::fs::create_dir_all(&work_dir);
     }
