@@ -1,5 +1,5 @@
 import { Child } from '@tauri-apps/plugin-shell'
-import { formatPath, getAvailablePorts } from '../utils'
+import { formatPath, getAvailablePorts, isPortAvailable } from '../utils'
 import { openlistInfo } from '../../services/openlist'
 import { nmConfig, osInfo } from '../../services/config'
 import {
@@ -12,6 +12,7 @@ import { openlist_api_ping } from './request'
 import { addParams, openlistDataDir } from './paths'
 import { openlistLogFile } from '../netmountPaths'
 import { restartSidecar, startSidecarAndWait, stopSidecarGracefully } from '../sidecarService'
+import { invoke } from "@tauri-apps/api/core";
 import { parseExtraCliArgs } from '../cliArgs'
 
 async function startOpenlist() {
@@ -74,7 +75,6 @@ async function startOpenlist() {
 
   // 使用 Rust 端启动 sidecar，确保由主进程创建
   // 传入数据目录作为工作目录，确保 openlist 能正确找到数据库文件
-  const dataDir = openlistDataDir()
   let pid: number
   try {
     pid = await startSidecarAndWait({
